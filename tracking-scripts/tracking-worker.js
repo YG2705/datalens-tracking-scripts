@@ -22,12 +22,21 @@ importScripts('https://cdn.jsdelivr.net/npm/idb@7/build/iife/index-min.js');
 const initDatabase = () => {
   return idb.openDB(WORKER_CONFIG.dbName, WORKER_CONFIG.dbVersion, {
     upgrade(db) {
-      db.createObjectStore('failedEvents', { keyPath: 'id', autoIncrement: true });
+      if (!db.objectStoreNames.contains('failedEvents')) {
+        db.createObjectStore('failedEvents', { keyPath: 'id', autoIncrement: true });
+      }
     }
   });
 };
 
-const dbPromise = initDatabase();
+// Guard against initialization errors
+let dbPromise;
+try {
+  dbPromise = initDatabase();
+} catch (error) {
+  console.error('[SW] Database initialization failed:', error);
+  dbPromise = Promise.resolve(null);
+}
 
 // DataLens Tracking Worker - Database Module
 const DB = {
@@ -35,11 +44,16 @@ const DB = {
   storeFailedEvent: async (eventData) => {
     try {
       const db = await dbPromise;
+      if (!db) {
+        console.error('[SW] Database not available, cannot store event');
+        return;
+      }
+      
       await db.add('failedEvents', { ...eventData });
       console.log('[SW] Event stored for later retry');
       
       // Register a background-sync so the browser retries when online
-      if (self.registration.sync) {
+      if (self.registration && self.registration.sync) {
         await self.registration.sync.register('datalens-tracking-sync');
       }
     } catch (storeError) {
@@ -51,6 +65,7 @@ const DB = {
   getAllFailedEvents: async () => {
     try {
       const db = await dbPromise;
+      if (!db) return [];
       return await db.getAll('failedEvents');
     } catch (error) {
       console.error('[SW] Error getting failed events:', error);
@@ -62,6 +77,7 @@ const DB = {
   deleteFailedEvent: async (eventId) => {
     try {
       const db = await dbPromise;
+      if (!db) return;
       await db.delete('failedEvents', eventId);
     } catch (error) {
       console.error('[SW] Error deleting event:', error);
@@ -72,6 +88,8 @@ const DB = {
   cleanupOldEvents: async () => {
     try {
       const db = await dbPromise;
+      if (!db) return;
+      
       const all = await db.getAll('failedEvents');
       const now = new Date();
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -157,14 +175,14 @@ const NETWORK = {
 const HANDLERS = {
   // Handle navigation events across the site
   handleNavigation: async (event) => {
-    if (event.request.method !== 'GET') return;
-    
-    const url = new URL(event.request.url);
-    const isNavigation = event.request.mode === 'navigate';
-    
-    if (!isNavigation) return;
+    if (!event || !event.request || event.request.method !== 'GET') return;
     
     try {
+      const url = new URL(event.request.url);
+      const isNavigation = event.request.mode === 'navigate';
+      
+      if (!isNavigation) return;
+      
       const allClients = await clients.matchAll({ includeUncontrolled: true });
       
       allClients.forEach(client => {
@@ -183,21 +201,30 @@ const HANDLERS = {
 
   // Handle tracking events from the page
   handleTrackingMessage: (event) => {
-    if (!event.data || event.data.type !== 'track') return;
+    if (!event || !event.data || event.data.type !== 'track') return;
     
-    // Forward tracking data to the central tracking endpoint
-    const trackingData = event.data.trackingData;
-    
-    // Log just the event name, not the full payload
-    console.log('[SW] Processing event:', trackingData.eventName || 'unnamed event');
-    
-    // Preserve the source or set it to 'service-worker' if not already set
-    if (!trackingData.source) {
-      trackingData.source = 'service-worker';
+    try {
+      // Forward tracking data to the central tracking endpoint
+      const trackingData = event.data.trackingData;
+      
+      if (!trackingData) {
+        console.warn('[SW] Received tracking event with no data');
+        return;
+      }
+      
+      // Log just the event name, not the full payload
+      console.log('[SW] Processing event:', trackingData.eventName || trackingData.event || 'unnamed event');
+      
+      // Preserve the source or set it to 'service-worker' if not already set
+      if (!trackingData.source) {
+        trackingData.source = 'service-worker';
+      }
+      
+      // Send the data to the backend
+      NETWORK.sendTrackingData(event.data.endpoint || 'event', trackingData);
+    } catch (error) {
+      console.error('[SW] Error handling tracking message:', error);
     }
-    
-    // Send the data to the backend
-    NETWORK.sendTrackingData(event.data.endpoint || 'event', trackingData);
   }
 };
 
