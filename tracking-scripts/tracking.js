@@ -77,12 +77,21 @@
       return 'desktop';
     }
     
+    // Safe text getter - ensures no null exception when getting text
+    function safeGetText(element) {
+      if (!element) return '';
+      if (typeof element.innerText !== 'undefined' && element.innerText) return element.innerText;
+      if (typeof element.textContent !== 'undefined' && element.textContent) return element.textContent;
+      return '';
+    }
+    
     return {
       generateId,
       getOrCreateVisitorId,
       getWebsiteIdFromScript,
       getParameterByName,
-      getDeviceType
+      getDeviceType,
+      safeGetText
     };
   })();
 
@@ -100,14 +109,15 @@
         });
       } else {
         // Fallback to direct sending
+        const fullEndpoint = dl_config.trackingEndpoint + (endpoint.startsWith('/') ? endpoint : '/' + endpoint);
         
         // Use navigator.sendBeacon for more reliable data sending
         if (navigator.sendBeacon) {
           const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-          navigator.sendBeacon(dl_config.trackingEndpoint + endpoint, blob);
+          navigator.sendBeacon(fullEndpoint, blob);
         } else {
           // Fallback to fetch
-          fetch(dl_config.trackingEndpoint + endpoint, {
+          fetch(fullEndpoint, {
             method: 'POST',
             body: JSON.stringify(data),
             headers: {
@@ -158,35 +168,43 @@
 
     // Check for success page based on URL or page content
     function checkForSuccessPage(url = window.location.href, path = window.location.pathname) {
-      // Common success URL patterns
-      const successUrlPatterns = [
-        '/success', '/thank-you', '/checkout/complete', '/order-confirmation',
-        '/payment-successful', '/purchase-complete', '/confirmation'
-      ];
-      
-      // Check if current URL matches success patterns
-      const isSuccessUrl = successUrlPatterns.some(pattern => 
-        (path || window.location.pathname).toLowerCase().includes(pattern)
-      );
-      
-      // Check for success message in page content
-      const successTextPatterns = [
-        'order confirmed', 'payment successful', 'thank you for your purchase',
-        'order completed', 'transaction complete', 'purchase successful'
-      ];
-      
-      // Add null check before accessing document.body.innerText
-      const pageText = document.body ? document.body.innerText || '' : '';
-      const hasSuccessText = pageText.toLowerCase && pageText.toLowerCase().includes ? 
-        successTextPatterns.some(pattern => pageText.toLowerCase().includes(pattern)) : false;
-      
-      if (isSuccessUrl || hasSuccessText) {
-        dl_event_handler.trackEvent('purchase_completed', {
-          path: path || window.location.pathname,
-          success_page: true,
-          isSuccessUrl: isSuccessUrl,
-          hasSuccessText: hasSuccessText
-        });
+      try {
+        // Common success URL patterns
+        const successUrlPatterns = [
+          '/success', '/thank-you', '/checkout/complete', '/order-confirmation',
+          '/payment-successful', '/purchase-complete', '/confirmation'
+        ];
+        
+        // Check if current URL matches success patterns
+        const isSuccessUrl = successUrlPatterns.some(pattern => 
+          (path || window.location.pathname).toLowerCase().includes(pattern)
+        );
+        
+        // Check for success message in page content - with proper null checks
+        const successTextPatterns = [
+          'order confirmed', 'payment successful', 'thank you for your purchase',
+          'order completed', 'transaction complete', 'purchase successful'
+        ];
+        
+        // Safely access document.body and check for text content
+        let hasSuccessText = false;
+        if (document && document.body) {
+          const pageText = dl_utils.safeGetText(document.body);
+          hasSuccessText = successTextPatterns.some(pattern => 
+            pageText.toLowerCase().includes(pattern)
+          );
+        }
+        
+        if (isSuccessUrl || hasSuccessText) {
+          dl_event_handler.trackEvent('purchase_completed', {
+            path: path || window.location.pathname,
+            success_page: true,
+            isSuccessUrl: isSuccessUrl,
+            hasSuccessText: hasSuccessText
+          });
+        }
+      } catch (err) {
+        console.error('Error checking for success page:', err);
       }
     }
 
@@ -247,55 +265,58 @@
         return;
       }
       
-      // Elements that might be related to revenue/conversions
-      const revenueSelectorPatterns = [
-        // Buttons
-        'button', '[role="button"]', 'input[type="submit"]', 'input[type="button"]',
-        // Links styled as buttons
-        'a.button', '.btn', '.button', '.cta', 
-        // Shopping related
-        '.add-to-cart', '.buy-now', '.checkout', '.subscribe', 
-        // Images that might be clickable for purchasing
-        'img[onclick]', 'img.product-image[alt*="buy"]', 'img.cta', 
-        // Custom elements
-        '[data-dl-track="revenue"]', '[data-product-purchase]'
-      ];
-      
-      // Common text patterns that suggest revenue actions
-      const revenueTextPatterns = [
-        'buy now', 'purchase', 'checkout', 'pay', 'subscribe',
-        'add to cart', 'order now', 'complete order', 'complete purchase',
-        'submit order', 'place order', 'confirm', 'sign up', 'join now',
-        'get started', 'try it free', 'start trial', 'get access'
-      ];
-      
       try {
+        // Elements that might be related to revenue/conversions
+        const revenueSelectorPatterns = [
+          // Buttons
+          'button', '[role="button"]', 'input[type="submit"]', 'input[type="button"]',
+          // Links styled as buttons
+          'a.button', '.btn', '.button', '.cta', 
+          // Shopping related
+          '.add-to-cart', '.buy-now', '.checkout', '.subscribe', 
+          // Images that might be clickable for purchasing
+          'img[onclick]', 'img.product-image[alt*="buy"]', 'img.cta', 
+          // Custom elements
+          '[data-dl-track="revenue"]', '[data-product-purchase]'
+        ];
+        
+        // Common text patterns that suggest revenue actions
+        const revenueTextPatterns = [
+          'buy now', 'purchase', 'checkout', 'pay', 'subscribe',
+          'add to cart', 'order now', 'complete order', 'complete purchase',
+          'submit order', 'place order', 'confirm', 'sign up', 'join now',
+          'get started', 'try it free', 'start trial', 'get access'
+        ];
+        
         // Find all potential interactive elements
         const elements = document.querySelectorAll(revenueSelectorPatterns.join(', '));
         
         elements.forEach(element => {
-          if (!element || element.dataset && element.dataset.dlTracked) {
+          if (!element || (element.dataset && element.dataset.dlTracked)) {
             return;
           }
           
-          // Get visible text content with null checks
-          const elementText = element.textContent || '';
+          // Safely get text content using the utility function
+          const elementText = dl_utils.safeGetText(element);
           const elementValue = element.value || '';
           const elementAlt = element.alt || '';
           
-          const visibleText = (elementText.toLowerCase ? elementText.toLowerCase().trim() : '') || 
-                             (elementValue.toLowerCase ? elementValue.toLowerCase().trim() : '') ||
-                             (elementAlt.toLowerCase ? elementAlt.toLowerCase().trim() : '');
+          const visibleText = (elementText || elementValue || elementAlt).toLowerCase().trim();
           
           // Check for image elements specifically
-          const isImage = element.tagName && element.tagName.toLowerCase && element.tagName.toLowerCase() === 'img';
-          const parentIsLink = element.parentElement && element.parentElement.tagName && 
-                              element.parentElement.tagName.toLowerCase && element.parentElement.tagName.toLowerCase() === 'a';
+          const isImage = element.tagName && 
+                          element.tagName.toLowerCase && 
+                          element.tagName.toLowerCase() === 'img';
+                          
+          const parentIsLink = element.parentElement && 
+                               element.parentElement.tagName && 
+                               element.parentElement.tagName.toLowerCase && 
+                               element.parentElement.tagName.toLowerCase() === 'a';
           
           // Check if this element might be revenue-related
           const isRevenueElement = 
             // Has revenue-related text
-            revenueTextPatterns.some(pattern => visibleText.includes && visibleText.includes(pattern)) ||
+            revenueTextPatterns.some(pattern => visibleText.includes(pattern)) ||
             // Has explicit tracking attributes
             (element.hasAttribute && element.hasAttribute('data-dl-track')) || 
             // Image with revenue-related alt text or inside a link
@@ -309,7 +330,9 @@
             if (element.addEventListener) {
               element.addEventListener('click', function(e) {
                 const elementData = {
-                  elementType: element.tagName ? (element.tagName.toLowerCase ? element.tagName.toLowerCase() : element.tagName) : 'unknown',
+                  elementType: element.tagName ? 
+                                (element.tagName.toLowerCase ? element.tagName.toLowerCase() : element.tagName) 
+                                : 'unknown',
                   elementText: visibleText,
                   elementId: element.id || '',
                   elementClass: element.className || '',
@@ -504,31 +527,37 @@
   
   // Main initialization
   function init() {
-    // Extract website ID from script or existing config
-    const scriptWebsiteId = dl_utils.getWebsiteIdFromScript();
-    const dlConfig = window.dl.find(item => item.websiteId) || { websiteId: scriptWebsiteId || 'unknown' };
-    dl_config.websiteId = dlConfig.websiteId;
-    
-    console.log("DataLens tracking initialized for website:", dl_config.websiteId);
-    
-    // Initialize session data
-    dl_session.initialize();
-    
-    // Track page view immediately
-    dl_events.trackPageView();
-    
-    // Setup click tracking
-    dl_events.setupElementTracking();
-    
-    // Track session time and activity
-    dl_session.setupSessionTracking();
-    
-    // Register service worker for site-wide tracking
-    dl_serviceWorker.registerServiceWorker();
-    
-    // Expose public API methods
-    window.dl.push = dl_events.pushHandler;
-    window.dl.trackEvent = dl_events.trackEvent;
-    window.dl.trackFunnelStep = dl_events.trackFunnelStep;
+    try {
+      // Extract website ID from script or existing config
+      const scriptWebsiteId = dl_utils.getWebsiteIdFromScript();
+      const dlConfig = Array.isArray(window.dl) ? window.dl.find(item => item.websiteId) : null;
+      dl_config.websiteId = dlConfig ? dlConfig.websiteId : (scriptWebsiteId || 'unknown');
+      
+      console.log("DataLens tracking initialized for website:", dl_config.websiteId);
+      
+      // Initialize session data
+      dl_session.initialize();
+      
+      // Track page view immediately
+      dl_events.trackPageView();
+      
+      // Setup click tracking
+      dl_events.setupElementTracking();
+      
+      // Track session time and activity
+      dl_session.setupSessionTracking();
+      
+      // Register service worker for site-wide tracking
+      dl_serviceWorker.registerServiceWorker();
+      
+      // Expose public API methods
+      if (Array.isArray(window.dl)) {
+        window.dl.push = dl_events.pushHandler;
+      }
+      window.dl.trackEvent = dl_events.trackEvent;
+      window.dl.trackFunnelStep = dl_events.trackFunnelStep;
+    } catch (err) {
+      console.error("Error initializing DataLens tracking:", err);
+    }
   }
 })();
