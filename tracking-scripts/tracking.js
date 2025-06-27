@@ -1,4 +1,3 @@
-
 /**
  * DataLens Tracking Script
  * 
@@ -476,27 +475,19 @@
 
   // DataLens Tracking - Service Worker Module
   var dl_serviceWorker = (function() {
-    // Register the service worker
+    // Register the service worker (same-origin only)
     function registerServiceWorker() {
       if ('serviceWorker' in navigator) {
-        // Try to use CDN version first for better delivery
-        const serviceWorkerUrl = 'https://cdn.jsdelivr.net/gh/YG2705/datalens-tracking-scripts@main/tracking-scripts/tracking-worker.js';
+        // Only use same-origin registration to avoid SecurityError
+        const serviceWorkerUrl = '/tracking-worker.js';
         
         navigator.serviceWorker.register(serviceWorkerUrl)
           .then(registration => {
             console.log('DataLens tracking service worker registered:', registration.scope);
           })
           .catch(error => {
-            console.error('Error registering tracking service worker from CDN:', error);
-            
-            // Fallback to local path if CDN fails
-            navigator.serviceWorker.register('/tracking-worker.js')
-              .then(registration => {
-                console.log('DataLens tracking service worker registered from local path:', registration.scope);
-              })
-              .catch(fallbackError => {
-                console.error('Failed to register tracking service worker from fallback path:', fallbackError);
-              });
+            console.error('Error registering tracking service worker:', error);
+            console.log('Tracking will continue without service worker offline support');
           });
         
         // Listen for messages from the service worker
@@ -561,3 +552,5 @@
     }
   }
 })();
+
+</edits_to_apply>
