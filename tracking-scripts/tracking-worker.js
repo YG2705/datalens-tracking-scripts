@@ -3,7 +3,7 @@
  * DataLens Tracking Service Worker
  * 
  * This is a consolidated service worker with offline support and 
- * automatic retry capabilities for tracking events.
+ * automatic retry capabilities for tracking  events.
  */
 
 // DataLens Tracking Worker - Configuration Module
